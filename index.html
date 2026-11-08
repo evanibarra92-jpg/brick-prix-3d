@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brick Prix 3D</title>
+<style>
+body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; user-select: none; }
+#hud { position: absolute; top: 15px; left: 15px; color: #fff; z-index: 10; pointer-events: none; }
+.card { background: rgba(0,0,0,0.7); padding: 12px 18px; border-radius: 8px; border: 2px solid #ffcc00; font-size: 16px; line-height: 1.5; font-weight: bold; }
+#menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(15,15,25,0.95); padding: 30px; border-radius: 15px; border: 3px solid #e63946; text-align: center; color: white; z-index: 20; min-width: 300px; box-shadow: 0 0 25px rgba(230,57,70,0.6); }
+#menu h1 { color: #ffcc00; margin: 0 0 10px 0; font-size: 32px; letter-spacing: 2px; }
+.btn { background: #e63946; color: white; border: none; padding: 12px 24px; margin: 10px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; display: block; width: 80%; margin: 10px auto; }
+.btn:hover { background: #ff4d5e; transform: scale(1.03); }
+#controls { position: absolute; bottom: 15px; left: 15px; color: #eee; background: rgba(0,0,0,0.6); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 10; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<div id="menu">
+<h1>BRICK PRIX 3D</h1>
+<p style="color:#aaa;margin-bottom:20px;">Lego Formula Circuit Racing</p>
+<button class="btn" onclick="startGame('race')">START RACE MODE (3 AI)</button>
+<button class="btn" onclick="startGame('timetrial')">START TIME TRIAL (Ghost)</button>
+</div>
+<div id="hud" style="display:none;">
+<div class="card">
+<div>MODE: <span id="m-mode" style="color:#ffcc00">RACE</span></div>
+<div>SPEED: <span id="m-speed">0</span> KM/H</div>
+<div>TIME: <span id="m-time">00:00.00</span></div>
+<div>BEST: <span id="m-best">--:--.--</span></div>
+<div>LAP: <span id="m-lap">1/3</span></div>
+<div id="pos-row">POS: <span id="m-pos" style="color:#ffcc00">1/4</span></div>
+</div>
+</div>
+<div id="controls">WASD / Arrow Keys: Drive | Space: Drift</div>
+<script>
+let scene, camera, renderer, mode = 'race';
+let playerCar, aiCars = [], ghostCar;
+let keys = {};
+let trackPoints = [];
+let checkpoints = [];
+let currentLap = 1, totalLaps = 3;
+let startTime = 0, lapStartTime = 0, bestLapTime = null;
+let currentReplay = [], bestReplay = [];
+let isRacing = false;
+let playerSpeed = 0, playerAngle = 0;
+let playerPos = new THREE.Vector3(0, 0.4, 0);
+
+function createStud(x, y, z, color, parent) {
+  const geo = new THREE.CylinderGeometry(0.12, 0.12, 0.08, 12);
+  const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.3 });
+  const stud = new THREE.Mesh(geo, mat);
+  stud.position.set(x, y + 0.04, z);
+  parent.add(stud);
+}
+
+function createLegoFormulaCar(colorHex) {
+  const car = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3, metalness: 0.1 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
+  const yellowMat = new THREE.MeshStandardMaterial({ color: 0xffcc00, roughness: 0.3 });
+  
+  const bodyGeo = new THREE.BoxGeometry(0.9, 0.3, 1.8);
+  const body = new THREE.Mesh(bodyGeo, mat);
+  body.position.y = 0.3;
+  car.add(body);
+  
+  const noseGeo = new THREE.BoxGeometry(0.5, 0.2, 1.0);
+  const nose = new THREE.Mesh(noseGeo, mat);
+  nose.position.set(0, 0.25, 1.2);
+  car.add(nose);
+  
+  const fWingGeo = new THREE.BoxGeometry(1.4, 0.08, 0.3);
+  const fWing = new THREE.Mesh(fWingGeo, yellowMat);
+  fWing.position.set(0, 0.15, 1.6);
+  car.add(fWing);
+  
+  const rWingGeo = new THREE.BoxGeometry(1.3, 0.1, 0.4);
+  const rWing = new THREE.Mesh(rWingGeo, yellowMat);
+  rWing.position.set(0, 0.65, -0.8);
+  car.add(rWing);
+  const rPillar1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.1), darkMat);
+  rPillar1.position.set(-0.3, 0.45, -0.8);
+  car.add(rPillar1);
+  const rPillar2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.1), darkMat);
+  rPillar2.position.set(0.3, 0.45, -0.8);
+  car.add(rPillar2);
+  
+  const cockpit = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.5), darkMat);
+  cockpit.position.set(0, 0.4, 0.1);
+  car.add(cockpit);
+  
+  for(let x of [-0.15, 0.15]) {
+    for(let z of [0.9, 1.1, 1.3]) createStud(x, 0.35, z, colorHex, car);
+  }
+  for(let x of [-0.3, 0.3]) {
+    for(let z of [-0.3, -0.1, 0.3, 0.5]) createStud(x, 0.45, z, colorHex, car);
+  }
+  
+  car.wheels = [];
+  const wGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.22, 16);
+  wGeo.rotateZ(Math.PI / 2);
+  const wPositions = [
+    { x: -0.65, y: 0.28, z: 1.1, front: true },
+    { x: 0.65, y: 0.28, z: 1.1, front: true },
+    { x: -0.65, y: 0.28, z: -0.7, front: false },
+    { x: 0.65, y: 0.28, z: -0.7, front: false }
+  ];
+  
+  wPositions.forEach(p => {
+    const wPivot = new THREE.Group();
+    wPivot.position.set(p.x, p.y, p.z);
+    const wheel = new THREE.Mesh(wGeo, darkMat);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.23, 12), yellowMat);
+    hub.rotation.z = Math.PI / 2;
+    wheel.add(hub);
+    wPivot.add(wheel);
+    car.add(wPivot);
+    car.wheels.push({ pivot: wPivot, mesh: wheel, isFront: p.front });
+  });
+  
+  return car;
+}
+
+function init() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x75aadb);
+  scene.fog = new THREE.FogExp2(0x75aadb, 0.008);
+  
+  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+  
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambient);
+  const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+  sun.position.set(50, 80, 50);
+  sun.castShadow = true;
+  scene.add(sun);
+  
+  const groundGeo = new THREE.PlaneGeometry(500, 500);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x44aa44, roughness: 0.8 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+  
+  buildCircuit();
+  
+  window.addEventListener('keydown', e => keys[e.code] = true);
+  window.addEventListener('keyup', e => keys[e.code] = false);
+  window.addEventListener('resize', onWindowResize);
+}
+
+function buildCircuit() {
+  const curvePoints = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(40, 0, 10),
+    new THREE.Vector3(70, 0, 40),
+    new THREE.Vector3(60, 0, 90),
+    new THREE.Vector3(20, 0, 120),
+    new THREE.Vector3(-40, 0, 110),
+    new THREE.Vector3(-70, 0, 70),
+    new THREE.Vector3(-50, 0, 30),
+    new THREE.Vector3(-20, 0, 10)
+  ];
+  
+  const curve = new THREE.CatmullRomCurve3(curvePoints, true);
+  trackPoints = curve.getSpacedPoints(200);
+  checkpoints = curve.getSpacedPoints(20);
+  
+  const trackWidth = 10;
+  const trackGeo = new THREE.BufferGeometry();
+  const vertices = [], uvs = [], indices = [];
+  
+  for (let i = 0; i < trackPoints.length; i++) {
+    const p1 = trackPoints[i];
+    const p2 = trackPoints[(i + 1) % trackPoints.length];
+    const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const side = new THREE.Vector3().crossVectors(dir, up).normalize();
+    
+    const left = new THREE.Vector3().addVectors(p1, side.clone().multiplyScalar(trackWidth / 2));
+    const right = new THREE.Vector3().addVectors(p1, side.clone().multiplyScalar(-trackWidth / 2));
+    
+    vertices.push(left.x, 0.05, left.z);
+    vertices.push(right.x, 0.05, right.z);
+    
+    uvs.push(0, i / trackPoints.length * 20);
+    uvs.push(1, i / trackPoints.length * 20);
+    
+    if (i < trackPoints.length) {
+      const idx = i * 2;
+      const nextIdx = ((i + 1) % trackPoints.length) * 2;
+      indices.push(idx, idx + 1, nextIdx);
+      indices.push(nextIdx, idx + 1, nextIdx + 1);
+    }
+  }
+  
+  trackGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  trackGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  trackGeo.setIndex(indices);
+  trackGeo.computeVertexNormals();
+  
+  const roadMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.6 });
+  const trackMesh = new THREE.Mesh(trackGeo, roadMat);
+  scene.add(trackMesh);
+  
+  for (let i = 0; i < trackPoints.length; i += 2) {
+    const p1 = trackPoints[i];
+    const p2 = trackPoints[(i + 1) % trackPoints.length];
+    const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+    const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+    const isRed = (Math.floor(i / 2) % 2 === 0);
+    const curbMat = new THREE.MeshStandardMaterial({ color: isRed ? 0xdd2222 : 0xffffff });
+    
+    const lCurbPos = new THREE.Vector3().addVectors(p1, side.clone().multiplyScalar(trackWidth / 2 + 0.3));
+    const curbL = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.15, 1.2), curbMat);
+    curbL.position.copy(lCurbPos);
+    curbL.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    scene.add(curbL);
+    
+    const rCurbPos = new THREE.Vector3().addVectors(p1, side.clone().multiplyScalar(-trackWidth / 2 - 0.3));
+    const curbR = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.15, 1.2), curbMat);
+    curbR.position.copy(rCurbPos);
+    curbR.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    scene.add(curbR);
+    
+    if (i % 6 === 0) {
+      const tireMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+      for (let stack of [-trackWidth/2 - 1.2, trackWidth/2 + 1.2]) {
+        const tPos = new THREE.Vector3().addVectors(p1, side.clone().multiplyScalar(stack));
+        for (let h = 0; h < 3; h++) {
+          const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.3, 10), tireMat);
+          tire.position.set(tPos.x, 0.15 + h * 0.3, tPos.z);
+          scene.add(tire);
+        }
+      }
+    }
+  }
+  
+  const archMat = new THREE.MeshStandardMaterial({ color: 0xffcc00 });
+  const p0 = trackPoints[0];
+  const pNext = trackPoints[1];
+  const dir0 = new THREE.Vector3().subVectors(pNext, p0).normalize();
+  const side0 = new THREE.Vector3().crossVectors(dir0, new THREE.Vector3(0, 1, 0)).normalize();
+  
+  const pillarL = new THREE.Mesh(new THREE.BoxGeometry(0.8, 4, 0.8), archMat);
+  pillarL.position.copy(p0).add(side0.clone().multiplyScalar(trackWidth / 2 + 0.5)).setY(2);
+  scene.add(pillarL);
+  const pillarR = new THREE.Mesh(new THREE.BoxGeometry(0.8, 4, 0.8), archMat);
+  pillarR.position.copy(p0).add(side0.clone().multiplyScalar(-trackWidth / 2 - 0.5)).setY(2);
+  scene.add(pillarR);
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(trackWidth + 2, 0.8, 0.8), archMat);
+  beam.position.copy(p0).setY(4);
+  beam.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), side0);
+  scene.add(beam);
+}
+
+function startGame(selectedMode) {
+  mode = selectedMode;
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('hud').style.display = 'block';
+  document.getElementById('m-mode').innerText = mode.toUpperCase();
+  document.getElementById('pos-row').style.display = mode === 'race' ? 'block' : 'none';
+  
+  if (playerCar) scene.remove(playerCar);
+  aiCars.forEach(c => scene.remove(c.mesh));
+  aiCars = [];
+  if (ghostCar) scene.remove(ghostCar);
+  
+  playerCar = createLegoFormulaCar(0xee2222);
+  scene.add(playerCar);
+  
+  const startP = trackPoints[0];
+  const nextP = trackPoints[1];
+  const dir = new THREE.Vector3().subVectors(nextP, startP).normalize();
+  playerAngle = Math.atan2(dir.x, dir.z);
+  playerPos.copy(startP).setY(0.1);
+  playerCar.position.copy(playerPos);
+  playerCar.rotation.y = playerAngle;
+  playerSpeed = 0;
+  
+  if (mode === 'race') {
+    const aiColors = [0x2288ee, 0x22ee44, 0xeeee22];
+    const offsets = [-2.5, 2.5, -2.0];
+    for(let i = 0; i < 3; i++) {
+      const aiMesh = createLegoFormulaCar(aiColors[i]);
+      scene.add(aiMesh);
+      const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
+      const p = startP.clone().add(dir.clone().multiplyScalar(-(i+1)*4)).add(side.clone().multiplyScalar(offsets[i]));
+      aiMesh.position.copy(p).setY(0.1);
+      aiMesh.rotation.y = playerAngle;
+      aiCars.push({
+        mesh: aiMesh,
+        pos: p,
+        angle: playerAngle,
+        speed: 0,
+        targetIdx: 2,
+        lap: 1
+      });
+    }
+  } else if (mode === 'timetrial') {
+    ghostCar = createLegoFormulaCar(0xffffff);
+    ghostCar.traverse(child => {
+      if (child.isMesh) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        child.material.opacity = 0.4;
+      }
+    });
+    ghostCar.visible = false;
+    scene.add(ghostCar);
+  }
+  
+  currentLap = 1;
+  nextCheckpointIdx = 1;
+  startTime = performance.now();
+  lapStartTime = startTime;
+  currentReplay = [];
+  isRacing = true;
+  
+  animate();
+}
+
+let nextCheckpointIdx = 1;
+
+function updatePlayer(dt) {
+  const isAccel = keys['KeyW'] || keys['ArrowUp'];
+  const isBrake = keys['KeyS'] || keys['ArrowDown'];
+  const isLeft = keys['KeyA'] || keys['ArrowLeft'];
+  const isRight = keys['KeyD'] || keys['ArrowRight'];
+  const isDrift = keys['Space'];
+  
+  const maxSpeed = isDrift ? 35 : 40;
+  const accel = 20;
+  const friction = 12;
+  
+  if (isAccel) playerSpeed += accel * dt;
+  else if (isBrake) playerSpeed -= accel * 1.5 * dt;
+  else {
+    if (playerSpeed > 0) playerSpeed = Math.max(0, playerSpeed - friction * dt);
+    else if (playerSpeed < 0) playerSpeed = Math.min(0, playerSpeed + friction * dt);
+  }
+  playerSpeed = THREE.MathUtils.clamp(playerSpeed, -12, maxSpeed);
+  
+  let turnSpeed = isDrift ? 2.4 : 1.6;
+  if (isLeft) playerAngle += turnSpeed * dt * (playerSpeed >= 0 ? 1 : -1);
+  if (isRight) playerAngle -= turnSpeed * dt * (playerSpeed >= 0 ? 1 : -1);
+  
+  const forward = new THREE.Vector3(Math.sin(playerAngle), 0, Math.cos(playerAngle));
+  playerPos.add(forward.clone().multiplyScalar(playerSpeed * dt));
+  playerCar.position.copy(playerPos);
+  playerCar.rotation.y = playerAngle;
+  
+  const steerRot = isLeft ? 0.4 : (isRight ? -0.4 : 0);
+  playerCar.wheels.forEach(w => {
+    if (w.isFront) w.pivot.rotation.y = steerRot;
+    w.mesh.rotation.x += playerSpeed * dt * 2;
+  });
+  
+  const targetCp = checkpoints[nextCheckpointIdx];
+  if (playerPos.distanceTo(targetCp) < 12) {
+    nextCheckpointIdx = (nextCheckpointIdx + 1) % checkpoints.length;
+    if (nextCheckpointIdx === 1) {
+      const lapTime = (performance.now() - lapStartTime) / 1000;
+      if (!bestLapTime || lapTime < bestLapTime) {
+        bestLapTime = lapTime;
+        bestReplay = [...currentReplay];
+        if (ghostCar) ghostCar.visible = true;
+      }
+      currentLap++;
+      lapStartTime = performance.now();
+      currentReplay = [];
+      if (currentLap > totalLaps) {
+        isRacing = false;
+        alert("RACE FINISHED! Final Time: " + formatTime((performance.now() - startTime) / 1000));
+        document.getElementById('menu').style.display = 'block';
+      }
+    }
+  }
+  
+  if (isRacing) {
+    currentReplay.push({
+      time: performance.now() - lapStartTime,
+      pos: playerPos.clone(),
+      angle: playerAngle
+    });
+  }
+}
+
+function updateAI(dt) {
+  aiCars.forEach(ai => {
+    const target = trackPoints[ai.targetIdx];
+    const dir = new THREE.Vector3().subVectors(target, ai.pos);
+    dir.y = 0;
+    const dist = dir.length();
+    if (dist < 5) {
+      ai.targetIdx = (ai.targetIdx + 3) % trackPoints.length;
+    }
+    dir.normalize();
+    const targetAngle = Math.atan2(dir.x, dir.z);
+    
+    let diff = targetAngle - ai.angle;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    
+    ai.angle += THREE.MathUtils.clamp(diff, -1.5 * dt, 1.5 * dt);
+    ai.speed = 32;
+    
+    const forward = new THREE.Vector3(Math.sin(ai.angle), 0, Math.cos(ai.angle));
+    ai.pos.add(forward.multiplyScalar(ai.speed * dt));
+    ai.mesh.position.copy(ai.pos);
+    ai.mesh.rotation.y = ai.angle;
+    
+    ai.mesh.wheels.forEach(w => {
+      w.mesh.rotation.x += ai.speed * dt * 2;
+    });
+  });
+}
+
+function updateGhost() {
+  if (!ghostCar || !ghostCar.visible || bestReplay.length === 0) return;
+  const elapsed = performance.now() - lapStartTime;
+  let frame = bestReplay.find(f => f.time >= elapsed);
+  if (!frame) frame = bestReplay[bestReplay.length - 1];
+  ghostCar.position.copy(frame.pos);
+  ghostCar.rotation.y = frame.angle;
+}
+
+function updateHUD() {
+  document.getElementById('m-speed').innerText = Math.abs(Math.round(playerSpeed * 3));
+  const elapsed = (performance.now() - startTime) / 1000;
+  document.getElementById('m-time').innerText = formatTime(elapsed);
+  document.getElementById('m-best').innerText = bestLapTime ? formatTime(bestLapTime) : '--:--.--';
+  document.getElementById('m-lap').innerText = Math.min(currentLap, totalLaps) + '/' + totalLaps;
+  
+  if (mode === 'race') {
+    let pos = 1;
+    aiCars.forEach(ai => {
+      if (ai.pos.distanceTo(trackPoints[nextCheckpointIdx]) < playerPos.distanceTo(trackPoints[nextCheckpointIdx])) {
+        pos++;
+      }
+    });
+    document.getElementById('m-pos').innerText = pos + '/4';
+  }
+}
+
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.floor((sec % 1) * 100);
+  return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s + '.' + (ms < 10 ? '0' : '') + ms;
+}
+
+function updateCamera() {
+  if (!playerCar) return;
+  const offset = new THREE.Vector3(0, 4, -8);
+  offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerAngle);
+  const camPos = playerPos.clone().add(offset);
+  camera.position.lerp(camPos, 0.1);
+  camera.lookAt(playerPos.clone().add(new THREE.Vector3(0, 1, 2).applyAxisAngle(new THREE.Vector3(0,1,0), playerAngle)));
+}
+
+let lastTime = performance.now();
+function animate() {
+  if (!isRacing) return;
+  requestAnimationFrame(animate);
+  
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.1);
+  lastTime = now;
+  
+  updatePlayer(dt);
+  if (mode === 'race') updateAI(dt);
+  if (mode === 'timetrial') updateGhost();
+  updateCamera();
+  updateHUD();
+  
+  renderer.render(scene, camera);
+}
+
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
